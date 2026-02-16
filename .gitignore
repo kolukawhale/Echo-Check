@@ -208,6 +208,8 @@ __marimo__/
 
 # Echo-Check specific ignores
 data/
+data/raw/
+data/processed/
 *.wav
 *.zip
 .DS_Store
