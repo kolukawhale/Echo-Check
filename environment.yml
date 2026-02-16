@@ -1,0 +1,15 @@
+name: echo-check
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.9
+  - pip
+  - pip:
+    - librosa
+    - onnxruntime
+    - numpy
+    - scipy
+    - scikit-learn
+    - matplotlib
+    - notebook
