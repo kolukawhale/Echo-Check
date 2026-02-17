@@ -207,10 +207,9 @@ marimo/_lsp/
 __marimo__/
 
 # Echo-Check specific ignores
+data/
 data/raw/
 data/processed/
-venv/
 *.wav
 *.zip
-__pycache__/
 .DS_Store
