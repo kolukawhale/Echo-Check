@@ -2,6 +2,7 @@ import librosa
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
+import os
 
 # How many data points of audio we capture per second, unit is Hz
 SAMPLE_RATE = 22050
@@ -33,7 +34,10 @@ class Wav_to_mel:
         
         # Convert to a log scale: Hz to (Decibels)
         mel_db = librosa.power_to_db(spect, ref=np.max)
-        return mel_db
+
+        norm_spec = (mel_db + 80) / 80
+        
+        return norm_spec
 
     def visualize(self, mel_db, title="Mel-Spectrogram"):
         """Plots the spectrogram for a 'smoke test'."""
@@ -45,20 +49,5 @@ class Wav_to_mel:
         plt.show()
 
 if __name__ == "__main__":
-    TEST_PATH = "../data/raw/pump/id_00/normal/00000009.wav"
-
-    convertor = Wav_to_mel()
-
-    try:
-        if Path(TEST_PATH).exists():
-            raw_audio = convertor.load_audio(TEST_PATH)
-            spect = convertor.mel_spectogram(raw_audio)
-
-            print(f"{TEST_PATH} successfully converted to spectogram")
-            print(f"Data Shape: {spect.shape} (Frequencies x Time)")
-
-            convertor.visualize(spect, title=f"{TEST_PATH}: Mel-Spectrogram")
-        else:
-            print(f"{TEST_PATH} File couldnt be found")
-    except Exception as e:
-        print(f"{e}")
+    pass
+    
