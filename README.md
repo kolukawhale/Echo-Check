@@ -1,77 +1,89 @@
 # Echo-Check
 
-A modular, ONNX-optimized pipeline for industrial machinery anomaly detection using spectral audio analysis.
+Modular, ONNX-optimized pipeline for industrial machinery anomaly detection using spectral audio analysis.
 
-[![Python 3.10](https://img.shields.io/badge/python-3.10-blue.svg)](https://www.python.org/downloads/release/python-3100/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+## Project Overview
 
-## 📌 Project Overview
+Echo-Check is a system designed to detect anomalies in industrial machinery by analyzing acoustic emissions. It utilizes Mel-spectrogram conversion and unsupervised learning techniques to provide a robust framework for equipment health monitoring. The pipeline is optimized for edge deployment using ONNX.
 
-**Echo-Check** is designed to detect anomalies in industrial machinery by analyzing acoustic emissions. By leveraging Mel-spectrogram conversion and unsupervised learning, the system provides a robust framework for real-time equipment health monitoring.
+## Project Structure
 
-## 📂 Project Structure
+| Directory/File | Description |
+| :--- | :--- |
+| `data/` | Raw and processed audio files (excluded from version control) |
+| `docs/` | Project documentation and architecture diagrams |
+| `models/` | Trained weights and exported .onnx files |
+| `notebooks/` | Jupyter notebooks for EDA and experiments |
+| `src/` | Core source code for data processing and inference |
+| `src/ingestion.py` | Mel-spectrogram extraction using the `Wav_to_mel` class |
+| `src/preprocess_all.py` | Batch processing automation for dataset preparation |
+| `src/test_processed_data.py` | Data integrity and normalization verification |
+| `src/features.py` | Spectrogram and MFCC extraction logic |
+| `src/inference.py` | ONNX runtime wrapper for anomaly detection |
+| `src/evaluation.py` | Metrics calculation and baseline comparisons |
+| `tests/` | Unit tests for processing modules |
+| `requirements.txt` | Python package dependencies |
+| `environment.yml` | Conda environment specification |
 
-```text
-Echo-Check/
-├── data/               # Raw and processed audio files (gitignored)
-├── docs/               # Project documentation and architecture diagrams
-├── models/             # Trained weights and exported .onnx files
-├── notebooks/          # Jupyter notebooks for EDA and experiments
-├── src/                # Core engine scripts
-│   ├── ingestion.py      # Mel-spectrogram extraction (Wav_to_mel class)
-│   ├── preprocess_all.py # Batch processing automation
-│   └── test_data.py      # Data integrity and normalization verification
-└── tests/              # Unit tests for processing modules
+## Getting Started
 
-🛠️ Getting Started
-Prerequisites
+### Prerequisites
 
-Python 3.10+ (Developed on 3.10.16)
+* Python 3.9
+* Conda (recommended for environment management)
 
-Conda (Recommended for environment management)
+### Installation
 
-Installation
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/kolukawhale/Echo-Check.git
+   cd Echo-Check
+   ```
 
-Clone the repository:
+2. Create and activate the Conda environment:
+   ```bash
+   conda env create -f environment.yml
+   conda activate echo-check
+   ```
 
-Bash
-git clone [https://github.com/kolukawhale/Echo-Check.git](https://github.com/kolukawhale/Echo-Check.git)
-cd Echo-Check
-Set up the environment:
+3. Alternatively, install dependencies via pip:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-Bash
-conda env create -f environment.yml
-conda activate echo-check
-📊 Data Procurement
-Echo-Check utilizes the MIMII Dataset. To set up the data pipeline:
+## Data Procurement
 
-Download: Obtain the -6_dB files from the MIMII Zenodo Page. We recommend starting with pump.zip.
+Echo-Check utilizes the MIMII Dataset. Follow these steps to set up the data pipeline:
 
-Organize: Unzip the files into data/raw/pump/ following the structure below:
+1. **Download**: Obtain the -6 dB files from the [MIMII Zenodo Page](https://zenodo.org/record/3384388). It is recommended to start with the pump dataset.
+2. **Integrity Check**: Verify the integrity of the downloaded `.zip` files via MD5 hash comparison before proceeding.
+3. **Organization**: Unzip the files into `data/raw/pump/` maintaining the following structure:
+   ```text
+   data/raw/pump/
+   └── id_00/
+       ├── normal/
+       └── abnormal/
+   ```
 
-Plaintext
-data/raw/pump/
-├── id_00/          # Machine ID
-│   ├── normal/     # Normal .wav files
-│   └── abnormal/   # Anomalous .wav files
-└── id_02/          # Additional Machine IDs...
-🚀 Usage
-1. Data Preprocessing
+## Usage
 
-Convert raw .wav audio into normalized 3D NumPy arrays (Mel-spectrograms). This script crawls all machine ID folders and saves optimized .npy files to data/processed/.
+### 1. Data Preprocessing
 
-Bash
+Convert raw `.wav` audio into normalized 3D NumPy arrays (Mel-spectrograms). This script processes all machine ID folders and saves optimized `.npy` files to `data/processed/`.
+
+```bash
 cd src
 python preprocess_all.py
-2. Verify Data Integrity
-
-Before training, run the test suite to ensure all data cubes meet the required specifications (Shape: [Batch, 128, 431], Range: [0, 1]).
-
-Bash
-python test_data.py
-📜 License
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-
-Would you like me to generate the **`environment.yml`** file now so your teammate
 ```
+
+### 2. Verify Data Integrity
+
+Ensure all processed data cubes meet the required specifications (Shape: [Batch, 128, 431], Range: [0, 1]).
+
+```bash
+python test_processed_data.py
+```
+
+## License
+
+This project is licensed under the MIT License.
