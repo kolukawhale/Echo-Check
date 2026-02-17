@@ -208,6 +208,7 @@ __marimo__/
 
 # Echo-Check specific ignores
 data/
+data/processed/*.npy
 data/raw/
 data/processed/
 *.wav
