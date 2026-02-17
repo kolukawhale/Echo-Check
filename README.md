@@ -1,3 +1,5 @@
+Markdown
+
 # Echo-Check
 
 A modular, ONNX-optimized pipeline for industrial machinery anomaly detection using spectral audio analysis.
@@ -12,72 +14,64 @@ Echo-Check is designed to detect anomalies in industrial machinery by analyzing 
 - `docs/`: Project documentation and architecture diagrams.
 - `models/`: Trained model weights and exported .onnx files.
 - `notebooks/`: Jupyter notebooks for EDA and experiments.
-- `src/`: Core engine scripts for ingestion, feature extraction, inference, and evaluation.
+- `src/`: Core engine scripts:
+  - `ingestion.py`: Contains the `Wav_to_mel` class for audio loading, trimming, and Mel-spectrogram conversion.
+  - `preprocess_all.py`: Automation script to batch-process all machine IDs into normalized NumPy arrays.
+  - `test_data.py`: Integrity suite to verify data shapes and normalization ranges.
 - `tests/`: Unit tests for processing modules.
 
 ## Getting Started
 
 ### Prerequisites
 
-- Python 3.9+
+- Python 3.10+ (Current environment uses 3.10.16)
 - [Conda](https://docs.conda.io/en/latest/) (recommended)
 
 ### Installation
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-username/echo-check.git
-   cd echo-check
+   git clone [https://github.com/kolukawhale/Echo-Check.git](https://github.com/kolukawhale/Echo-Check.git)
+   cd Echo-Check
+   Create and activate the Conda environment:
    ```
 
-2. Create and activate the Conda environment:
-   ```bash
-   conda env create -f environment.yml
-   conda activate echo-check
-   ```
-
-   *Alternatively, use pip:*
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-## Data Procurement
-
+Bash
+conda env create -f environment.yml
+conda activate echo-check
+Data Procurement
 To get started with Echo-Check, you'll need the MIMII dataset. Follow these steps to procure and organize the data:
 
-1. **Download the Dataset**:
-   - Go to the [MIMII Zenodo Page](https://zenodo.org/record/3384388).
-   - Scroll down to the **Files** section.
-   - Look for the **-6_dB** files (these contain a realistic amount of background noise).
-   - **Recommendation**: Download `pump.zip` (approx. 8GB) or `fan.zip` (approx. 10GB). The "Pump" dataset is preferred for its rich spectral features.
+Download the Dataset:
 
-2. **Verification**:
-   - Move the downloaded `.zip` file into the `data/raw` folder.
-   - Verify the file integrity using MD5 hash:
-     - **Windows (PowerShell)**: `Get-FileHash data/raw/pump.zip -Algorithm MD5`
-     - **Mac/Linux**: `md5sum data/raw/pump.zip`
-   - Compare the resulting string to the MD5 hash listed on the Zenodo page.
+Download the -6_dB files from the MIMII Zenodo Page.
 
-3. **Structure Your Data**:
-   - Unzip the file into `data/raw`. The structure should look like this:
-     ```text
-     data/raw/pump/
-     ├── 00/                  # Machine ID
-     │   ├── normal/          # Normal .wav files
-     │   └── anomaly/         # Anomalous .wav files
-     └── 02/                  # Machine ID
-     ```
+Recommendation: Download pump.zip.
 
-4. **Sanity Check**:
-   - Listen to a few files. A **normal** file should sound like a steady hum, while an **anomaly** file might contain clicks, grinds, or pitch changes.
+Structure Your Data:
 
-5. **Note on Git**:
-   - The `data/` directory is gitignored to prevent large files from being pushed to GitHub. Ensure your `.gitignore` is correctly configured.
+Unzip the files into data/raw/pump/. Ensure the directory structure follows this pattern:
 
-## Usage
+Plaintext
+data/raw/pump/
+├── id_00/ # Machine ID
+│ ├── normal/ # Normal .wav files
+│ └── abnormal/ # Anomalous .wav files
+├── id_02/
+└── ...
+Usage
 
-(Detailed usage instructions will be added as the project develops.)
+1. Data Preprocessing
 
-## License
+To convert raw .wav files into normalized Mel-spectrograms stored as .npy arrays, run the batch processor from the src directory:
 
+Bash
+cd src
+python preprocess_all.py 2. Verify Data Integrity
+
+After preprocessing, run the test suite to ensure all generated data cubes have a consistent shape (Batch, 128, 431) and are normalized within the [0, 1] range:
+
+Bash
+python test_data.py
+License
 This project is licensed under the MIT License - see the LICENSE file for details.
