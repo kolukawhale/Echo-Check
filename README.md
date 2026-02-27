@@ -17,11 +17,13 @@ Echo-Check is a system designed to detect anomalies in industrial machinery by a
 | `src/` | Core source code for data processing and inference |
 | `src/ingestion.py` | Mel-spectrogram extraction using the `Wav_to_mel` class |
 | `src/preprocess_all.py` | Batch processing automation for dataset preparation |
-| `src/test_processed_data.py` | Data integrity and normalization verification |
+| `src/create_train_test.py` | Train/Test split creation |
 | `src/features.py` | Spectrogram and MFCC extraction logic |
 | `src/inference.py` | ONNX runtime wrapper for anomaly detection |
 | `src/evaluation.py` | Metrics calculation and baseline comparisons |
 | `tests/` | Unit tests for processing modules |
+| `tests/test_processed_data.py` | Data integrity and normalization verification |
+| `tests/splits_test.py` | Train/Test split verification |
 | `requirements.txt` | Python package dependencies |
 | `environment.yml` | Conda environment specification |
 
@@ -81,7 +83,26 @@ python preprocess_all.py
 Ensure all processed data cubes meet the required specifications (Shape: [Batch, 128, 431], Range: [0, 1]).
 
 ```bash
+cd ../tests
 python test_processed_data.py
+```
+
+### 3. Create Train/Test Split
+
+Generate train and test sets from the processed data. This script splits normal data and combines all abnormal data into the test set.
+
+```bash
+cd ../src
+python create_train_test.py
+```
+
+### 4. Verify Splits
+
+Verify the integrity of the train/test splits, ensuring no data leakage and correct shapes.
+
+```bash
+cd ../tests
+python splits_test.py
 ```
 
 ## License
