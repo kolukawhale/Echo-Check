@@ -20,14 +20,10 @@ Echo-Check is a system designed to detect anomalies in industrial machinery by a
 | `src/create_train_test.py`     | Train/Test split creation                                     |
 | `src/training.py`              | Conv2D Autoencoder training                                   |
 | `src/evaluate_conv2d_lof.py`   | LOF scoring on encoder embeddings                             |
-| `src/export_onnx.py`           | Export trained model to ONNX format                           |
-| `src/quantize.py`              | INT8 quantization of ONNX model                               |
 | `src/inference.py`             | ONNX runtime wrapper for anomaly detection                    |
-| `src/predict.py`               | End-to-end prediction on a single `.wav` file                 |
 | `tests/`                       | Unit tests for processing modules                             |
 | `tests/test_processed_data.py` | Data integrity and normalization verification                 |
 | `tests/splits_test.py`         | Train/Test split verification                                 |
-| `tests/test_classification.py` | Per-file classification report                                |
 | `requirements.txt`             | Python package dependencies                                   |
 | `environment.yml`              | Conda environment specification                               |
 
