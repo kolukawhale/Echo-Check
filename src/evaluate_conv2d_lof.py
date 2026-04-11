@@ -264,6 +264,47 @@ def evaluate_all_ids(model, lof, device):
     print(f"\n{'='*55}")
     print(f"  Average AUC : {np.mean(all_aucs):.4f}")
     print(f"{'='*55}")
+
+    # ── Combined evaluation across all IDs ────────────────────────────────────
+    print(f"\n{'='*55}")
+    print("  COMBINED EVALUATION (all machine IDs pooled)")
+    print(f"{'='*55}")
+
+    all_specs  = np.concatenate([np.load(p) for p in TEST_NPYS  if Path(p).exists()])
+    all_labels = np.concatenate([np.load(p) for p in LABEL_NPYS if Path(p).exists()])
+
+    all_embeddings = extract_embeddings(model, all_specs, device)
+    all_scores     = np.array([lof_score(lof, emb) for emb in all_embeddings])
+
+    normal_scores   = all_scores[all_labels == 0]
+    abnormal_scores = all_scores[all_labels == 1]
+    threshold       = np.percentile(normal_scores, THRESHOLD_PCT)
+    predictions     = (all_scores > threshold).astype(int)
+
+    auc  = roc_auc_score(all_labels, all_scores)
+    f1   = f1_score(all_labels, predictions, zero_division=0)
+    prec = precision_score(all_labels, predictions, zero_division=0)
+    rec  = recall_score(all_labels, predictions, zero_division=0)
+
+    tp = int(((predictions == 1) & (all_labels == 1)).sum())
+    tn = int(((predictions == 0) & (all_labels == 0)).sum())
+    fp = int(((predictions == 1) & (all_labels == 0)).sum())
+    fn = int(((predictions == 0) & (all_labels == 1)).sum())
+
+    print(f"\n  Total samples : {len(all_labels)}  "
+          f"(normal={int((all_labels==0).sum())}, abnormal={int((all_labels==1).sum())})")
+    print(f"  Normal mean   : {normal_scores.mean():.4f}")
+    print(f"  Abnormal mean : {abnormal_scores.mean():.4f}")
+    print(f"  Threshold     : {threshold:.4f}  ({THRESHOLD_PCT}th pct)")
+    print(f"\n  AUC-ROC       : {auc:.4f}")
+    print(f"  Precision     : {prec:.4f}")
+    print(f"  Recall        : {rec:.4f}")
+    print(f"  F1 Score      : {f1:.4f}")
+    print(f"\n  Confusion Matrix")
+    print(f"  TP: {tp:>4}  FP: {fp:>4}")
+    print(f"  FN: {fn:>4}  TN: {tn:>4}")
+    print(f"{'='*55}")
+
     return all_aucs
 
 
