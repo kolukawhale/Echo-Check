@@ -11,13 +11,13 @@ soundfile==0.12.1
 torch==2.2.0
 scikit-learn==1.4.0
 
-# --- Optimization & Deployment (The "CS 5130" Edge) ---
+# --- Optimization & Deployment ---
 onnx==1.16.0
 onnxruntime==1.18.0
 onnxscript==0.1.0
+onnxsim
 
 # --- Visualization & Utilities ---
 matplotlib==3.8.2
 tqdm==4.66.1
-
 streamlit

@@ -2,23 +2,22 @@
 app.py — Echo-Check Streamlit frontend.
 
 Runs the Conv2D + LOF anomaly detection pipeline on an uploaded .wav file.
+Uses the ONNX-optimised encoder (encoder_simplified.onnx) for inference —
+no PyTorch required at runtime.
 
 Usage:
     streamlit run app.py
 """
 
-import sys
-import streamlit as st
-import numpy as np
-import pickle
-import torch
-import tempfile
 import os
+import pickle
+import tempfile
 from pathlib import Path
 
-# Allow imports from src/
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-from conv2d_model import CNNAutoencoder, EMBEDDING_DIM, TARGET_FREQ, TARGET_TIME
+import numpy as np
+import onnxruntime as ort
+import streamlit as st
+from onnxruntime import GraphOptimizationLevel, InferenceSession, SessionOptions
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -30,7 +29,7 @@ st.set_page_config(
 # ── Config ────────────────────────────────────────────────────────────────────
 _ROOT = Path(__file__).parent
 
-CHECKPOINT    = _ROOT / "models" / "conv2d" / "autoencoder.pth"
+ONNX_ENCODER = _ROOT / "models" / "phase3_outputs_lof" / "encoder_int8.onnx"
 LOF_MODEL     = _ROOT / "models" / "conv2d" / "lof_model.pkl"
 TRAIN_NPYS    = {
     "id_00": _ROOT / "data/splits/pump_id_00_train.npy",
@@ -38,84 +37,97 @@ TRAIN_NPYS    = {
     "id_04": _ROOT / "data/splits/pump_id_04_train.npy",
     "id_06": _ROOT / "data/splits/pump_id_06_train.npy",
 }
+TARGET_FREQ   = 128
+TARGET_TIME   = 432
 THRESHOLD_PCT = 95
 
 
 # ── Cached model loading ──────────────────────────────────────────────────────
 @st.cache_resource
 def load_model():
-    device = torch.device("cpu")
-    ckpt   = torch.load(CHECKPOINT, map_location=device, weights_only=False)
-    model  = CNNAutoencoder(embedding_dim=EMBEDDING_DIM).to(device)
-    model.load_state_dict(ckpt["model_state_dict"])
-    model.eval()
+    """Load ONNX encoder session and LOF model."""
+    so = SessionOptions()
+    so.graph_optimization_level = GraphOptimizationLevel.ORT_ENABLE_ALL
+    session = InferenceSession(
+        str(ONNX_ENCODER),
+        sess_options=so,
+        providers=["CPUExecutionProvider"],
+    )
     with open(LOF_MODEL, "rb") as f:
         lof = pickle.load(f)
-    return model, lof, device
+    return session, lof
 
 
 @st.cache_resource
 def load_thresholds():
-    model, lof, device = load_model()
-    thresholds = {}
+    """Pre-compute LOF score thresholds from normal training data per machine ID."""
+    session, lof = load_model()
+    thresholds   = {}
     for machine_id, npy_path in TRAIN_NPYS.items():
         if not npy_path.exists():
             continue
-        specs      = np.load(npy_path)
-        embeddings = extract_embeddings(model, specs, device)
-        scores     = np.array([-lof.score_samples(e.reshape(1, -1))[0] for e in embeddings])
+        specs      = np.load(npy_path)                          # (N, 128, T)
+        embeddings = extract_embeddings(session, specs)
+        scores     = np.array([-lof.score_samples(e.reshape(1, -1))[0]
+                                for e in embeddings])
         thresholds[machine_id] = float(np.percentile(scores, THRESHOLD_PCT))
     return thresholds
 
 
 # ── Inference helpers ─────────────────────────────────────────────────────────
 def wav_to_spectrogram(wav_path: str) -> np.ndarray:
+    """Load WAV and convert to normalised mel spectrogram."""
     import librosa
     audio, _ = librosa.load(wav_path, sr=22050, mono=True)
     audio, _ = librosa.effects.trim(audio)
-    spec     = librosa.feature.melspectrogram(y=audio, sr=22050, n_mels=128)
+    spec     = librosa.feature.melspectrogram(y=audio, sr=22050, n_mels=TARGET_FREQ)
     mel_db   = librosa.power_to_db(spec, ref=np.max)
     return (mel_db + 80) / 80
 
 
-def pad_spectrogram(spec: np.ndarray) -> torch.Tensor:
+def pad_spectrogram(spec: np.ndarray) -> np.ndarray:
+    """Pad or trim spectrogram to TARGET_TIME frames, return (1,1,128,432) float32."""
     t = spec.shape[1]
     if t < TARGET_TIME:
         spec = np.pad(spec, ((0, 0), (0, TARGET_TIME - t)), mode="constant")
-    elif t > TARGET_TIME:
+    else:
         spec = spec[:, :TARGET_TIME]
-    return torch.tensor(spec, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+    return spec[np.newaxis, np.newaxis, :, :].astype(np.float32)  # (1,1,128,432)
 
 
-@torch.no_grad()
-def extract_embeddings(model, spectrograms, device):
+def extract_embeddings(session, spectrograms: np.ndarray) -> np.ndarray:
+    """Run ONNX encoder on a batch of spectrograms -> (N, embedding_dim)."""
+    iname   = session.get_inputs()[0].name
     results = []
-    for i in range(0, len(spectrograms), 64):
-        batch = spectrograms[i:i+64]
-        batch = torch.tensor(batch, dtype=torch.float32).unsqueeze(1)
-        if batch.shape[-1] < TARGET_TIME:
-            batch = torch.nn.functional.pad(batch, (0, TARGET_TIME - batch.shape[-1]))
-        emb = model.encoder(batch.to(device))
-        results.append(emb.cpu().numpy())
-    return np.concatenate(results, axis=0)
+    for i in range(len(spectrograms)):
+        spec = spectrograms[i]                              # (128, T)
+        inp  = pad_spectrogram(spec)                        # (1,1,128,432)
+        emb  = session.run(None, {iname: inp})[0]           # (1, 128)
+        results.append(emb[0])
+    return np.array(results)                                # (N, 128)
 
 
-@torch.no_grad()
 def predict(wav_path: str, machine_id: str) -> dict:
-    model, lof, device = load_model()
-    thresholds         = load_thresholds()
-    spec    = wav_to_spectrogram(wav_path)
-    tensor  = pad_spectrogram(spec).to(device)
-    emb     = model.encoder(tensor).cpu().numpy()
-    score   = float(-lof.score_samples(emb.reshape(1, -1))[0])
-    thresh  = thresholds.get(machine_id, 1.5)
-    label   = "ANOMALY" if score > thresh else "NORMAL"
+    """Full inference pipeline: WAV -> spectrogram -> ONNX embedding -> LOF score."""
+    session, lof = load_model()
+    thresholds   = load_thresholds()
+
+    spec   = wav_to_spectrogram(wav_path)
+    inp    = pad_spectrogram(spec)
+
+    iname  = session.get_inputs()[0].name
+    emb    = session.run(None, {iname: inp})[0]             # (1, 128)
+
+    score  = float(-lof.score_samples(emb.reshape(1, -1))[0])
+    thresh = thresholds.get(machine_id, 1.5)
+    label  = "ANOMALY" if score > thresh else "NORMAL"
+
     return {"label": label, "score": score, "threshold": thresh, "spec": spec}
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
 st.title("🔊 Echo-Check")
-st.caption("Industrial pump anomaly detection — Conv2D Autoencoder + LOF scoring")
+st.caption("Industrial pump anomaly detection — Conv2D Encoder (ONNX) + LOF scoring")
 
 st.divider()
 

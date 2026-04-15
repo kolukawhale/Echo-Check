@@ -54,10 +54,10 @@ from sklearn.metrics import roc_auc_score
 warnings.filterwarnings("ignore")
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-ROOT       = os.path.dirname(os.path.abspath(__file__))
+ROOT       = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Echo-Check/
 MODELS_DIR = os.path.join(ROOT, "models", "conv2d")
 DATA_DIR   = os.path.join(ROOT, "data", "splits")
-OUTPUT_DIR = os.path.join(ROOT, "phase3_outputs_lof")
+OUTPUT_DIR = os.path.join(ROOT, "models", "phase3_outputs_lof")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 PTH_AUTOENCODER    = os.path.join(MODELS_DIR, "autoencoder.pth")
