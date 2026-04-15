@@ -1,8 +1,11 @@
 # Data & Models
 data/
-models/*.pth
-models/*_prep.onnx
-models/*.pkl
+models/**/*.pth
+models/**/*.pkl
+models/**/*_prep.onnx
+models/**/*_simplified.onnx
+models/**/*_full.onnx
+models/**/*.data
 
 # Python
 __pycache__/
