@@ -18,12 +18,19 @@ Echo-Check is a system designed to detect anomalies in industrial machinery by a
 | `src/ingestion.py`             | Mel-spectrogram extraction using the `Wav_to_mel` class       |
 | `src/preprocess_all.py`        | Batch processing automation for dataset preparation           |
 | `src/create_train_test.py`     | Train/Test split creation                                     |
+| `src/conv2d_model.py`          | Conv2D Autoencoder architecture definition                    |
 | `src/training.py`              | Conv2D Autoencoder training                                   |
 | `src/evaluate_conv2d_lof.py`   | LOF scoring on encoder embeddings                             |
+| `src/phase3_optimize.py`       | ONNX export, graph optimisation, INT8 quantization            |
 | `src/inference.py`             | ONNX runtime wrapper for anomaly detection                    |
+| `app.py`                       | Streamlit frontend for end-to-end inference                   |
 | `tests/`                       | Unit tests for processing modules                             |
 | `tests/test_processed_data.py` | Data integrity and normalization verification                 |
 | `tests/splits_test.py`         | Train/Test split verification                                 |
+| `tests/test_classification.py` | Per-file classification report                                |
+| `tests/test_conv2d_model.py`   | Architecture unit tests                                       |
+| `tests/test_training.py`       | Training pipeline unit tests                                  |
+| `tests/test_lof.py`            | LOF scoring unit tests                                        |
 | `requirements.txt`             | Python package dependencies                                   |
 | `environment.yml`              | Conda environment specification                               |
 
@@ -55,7 +62,7 @@ Echo-Check is a system designed to detect anomalies in industrial machinery by a
 
 Echo-Check utilizes the MIMII Dataset. Follow these steps to set up the data pipeline:
 
-1. **Download**: Obtain the -6 dB files from the [MIMII Zenodo Page](__https://zenodo.org/record/3384388__). It is recommended to start with the pump dataset.
+1. **Download**: Obtain the -6 dB files from the [MIMII Zenodo Page](https://zenodo.org/record/3384388). It is recommended to start with the pump dataset.
 2. **Integrity Check**: Verify the integrity of the downloaded `.zip` files via MD5 hash comparison before proceeding.
 3. **Organization**: Unzip the files into `data/raw/pump/` maintaining the following structure:
    ```text
@@ -113,6 +120,36 @@ Extracts encoder embeddings from normal training data, fits a Local Outlier Fact
 
 ```bash
 python src/evaluate_conv2d_lof.py
+```
+
+### 7. ONNX Export & INT8 Quantization
+
+Exports the trained encoder to ONNX, applies graph optimisation, and quantizes to INT8 for edge deployment. Validates AUC retention and benchmarks CPU latency.
+
+```bash
+python src/phase3_optimize.py
+```
+
+Outputs saved to `models/phase3_outputs_lof/`:
+
+- `encoder_full.onnx` — full FP32 encoder
+- `encoder_simplified.onnx` — graph-optimised FP32
+- `encoder_int8.onnx` — INT8 quantized deployment model
+
+### 8. Run the Streamlit App
+
+Launches the frontend — upload a `.wav` file, select the machine ID, and get a NORMAL/ANOMALY prediction with the Mel-spectrogram visualised.
+
+```bash
+streamlit run app.py
+```
+
+### 9. Full Classification Report
+
+Reports correct vs incorrect classifications per machine ID with confusion matrix.
+
+```bash
+python tests/test_classification.py
 ```
 
 ## License
