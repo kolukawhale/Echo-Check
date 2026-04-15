@@ -13,10 +13,10 @@ dependencies:
       - soundfile==0.12.1
       - torch==2.2.0
       - scikit-learn==1.4.0
-      - onnx==1.16.0
+      - onnx==1.17.0
       - onnxruntime==1.18.0
       - onnxscript==0.1.0
-      - onnxsim
+      - onnxsim==0.4.36
       - matplotlib==3.8.2
       - tqdm==4.66.1
       - streamlit

@@ -1,28 +1,28 @@
 """
-test_train_test_split.py — Integrity checks for the train/test split output.
+splits_test.py — Integrity checks for the train/test split output.
 
 Verifies shape, label correctness, ratio, and data integrity for every
 machine ID found in the splits directory.
 
 Usage:
-    cd tests
-    python test_train_test_split.py
+    python tests/test_train_test_split.py
 """
 
 import numpy as np
 from pathlib import Path
 
-# Globals
-PROCESSED_DIR = "../data/processed"
-SPLITS_DIR    = "../data/splits"
+# ── Config ────────────────────────────────────────────────────────────────────
+_ROOT         = Path(__file__).parent.parent
+PROCESSED_DIR = _ROOT / "data" / "processed"
+SPLITS_DIR    = _ROOT / "data" / "splits"
 TRAIN_PERCENT = 0.8
-TOLERANCE     = 0.05   # acceptable deviation from the expected train/test ratio
-
+TOLERANCE     = 0.05   # acceptable deviation from expected train/test ratio
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def test_split_files(splits_dir=SPLITS_DIR, processed_dir=PROCESSED_DIR):
-    splits  = Path(splits_dir)
-    proc    = Path(processed_dir)
+    splits = Path(splits_dir)
+    proc   = Path(processed_dir)
 
     train_files = sorted(splits.glob("pump_id_*_train.npy"))
     if not train_files:
@@ -57,8 +57,8 @@ def test_split_files(splits_dir=SPLITS_DIR, processed_dir=PROCESSED_DIR):
         abnormal_path = proc / f"{prefix}_abnormal.npy"
 
         try:
-            X_normal   = np.load(normal_path)
-            n_normal   = len(X_normal)
+            X_normal = np.load(normal_path)
+            n_normal = len(X_normal)
         except FileNotFoundError:
             print(f"  FAILED — Original normal file not found: {normal_path}")
             all_passed = False
@@ -77,7 +77,7 @@ def test_split_files(splits_dir=SPLITS_DIR, processed_dir=PROCESSED_DIR):
         actual_train_pct = len(X_train) / n_normal
         results["Train ratio (~80%)"] = abs(actual_train_pct - TRAIN_PERCENT) <= TOLERANCE
 
-        # 3. Train contains only normal samples (no labels file, check via count)
+        # 3. Train size is non-empty
         results["Train size > 0"] = len(X_train) > 0
 
         # 4. Test set size = held-out normal + all abnormal
@@ -93,16 +93,20 @@ def test_split_files(splits_dir=SPLITS_DIR, processed_dir=PROCESSED_DIR):
         results["Abnormal label count correct"] = int((y_test == 1).sum()) == n_abnormal
 
         # 8. Correct spectrogram shape [N, 128, 431]
-        results["Train shape valid"] = X_train.ndim == 3 and X_train.shape[1] == 128 and X_train.shape[2] == 431
-        results["Test shape valid"]  = X_test.ndim  == 3 and X_test.shape[1]  == 128 and X_test.shape[2]  == 431
+        results["Train shape valid"] = (X_train.ndim == 3 and X_train.shape[1] == 128
+                                        and X_train.shape[2] == 431)
+        results["Test shape valid"]  = (X_test.ndim  == 3 and X_test.shape[1]  == 128
+                                        and X_test.shape[2]  == 431)
 
         # 9. No NaNs
         results["No NaNs in train"] = not np.isnan(X_train).any()
         results["No NaNs in test"]  = not np.isnan(X_test).any()
 
         # 10. Data is normalized [0, 1]
-        results["Train normalized"] = X_train.min() >= -1e-7 and X_train.max() <= 1.0000001
-        results["Test normalized"]  = X_test.min()  >= -1e-7 and X_test.max()  <= 1.0000001
+        results["Train normalized"] = (X_train.min() >= -1e-7
+                                       and X_train.max() <= 1.0000001)
+        results["Test normalized"]  = (X_test.min()  >= -1e-7
+                                       and X_test.max()  <= 1.0000001)
 
         # ── Print results ─────────────────────────────────────────────────────
         for check, passed in results.items():
@@ -112,7 +116,8 @@ def test_split_files(splits_dir=SPLITS_DIR, processed_dir=PROCESSED_DIR):
             print(f"  [{status}] {check}")
 
         print(f"\n  Summary — Normal: {n_normal} | Abnormal: {n_abnormal}")
-        print(f"  Train: {len(X_train)} ({actual_train_pct*100:.1f}%)  |  Test: {len(X_test)} (normal={n_test_normal}, abnormal={n_abnormal})")
+        print(f"  Train: {len(X_train)} ({actual_train_pct*100:.1f}%)  |  "
+              f"Test: {len(X_test)} (normal={n_test_normal}, abnormal={n_abnormal})")
 
     print("\n" + "-" * 60)
     if all_passed:

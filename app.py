@@ -2,7 +2,7 @@
 app.py — Echo-Check Streamlit frontend.
 
 Runs the Conv2D + LOF anomaly detection pipeline on an uploaded .wav file.
-Uses the ONNX-optimised encoder (encoder_simplified.onnx) for inference —
+Uses the ONNX-optimised encoder (encoder_int8.onnx) for inference —
 no PyTorch required at runtime.
 
 Usage:
@@ -15,14 +15,12 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-import onnxruntime as ort
 import streamlit as st
 from onnxruntime import GraphOptimizationLevel, InferenceSession, SessionOptions
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Echo-Check",
-    page_icon="🔊",
     layout="centered",
 )
 
@@ -59,19 +57,26 @@ def load_model():
 
 
 @st.cache_resource
-def load_thresholds():
-    """Pre-compute LOF score thresholds from normal training data per machine ID."""
+def load_thresholds_and_embeddings():
+    """
+    Pre-compute LOF score thresholds and cache training embeddings per machine ID.
+    Returns:
+        thresholds   : dict[machine_id -> float]
+        train_embeddings : dict[machine_id -> np.ndarray (N, embedding_dim)]
+    """
     session, lof = load_model()
-    thresholds   = {}
+    thresholds       = {}
+    train_embeddings = {}
     for machine_id, npy_path in TRAIN_NPYS.items():
         if not npy_path.exists():
             continue
         specs      = np.load(npy_path)                          # (N, 128, T)
-        embeddings = extract_embeddings(session, specs)
+        embeddings = extract_embeddings(session, specs)         # (N, embedding_dim)
         scores     = np.array([-lof.score_samples(e.reshape(1, -1))[0]
                                 for e in embeddings])
-        thresholds[machine_id] = float(np.percentile(scores, THRESHOLD_PCT))
-    return thresholds
+        thresholds[machine_id]       = float(np.percentile(scores, THRESHOLD_PCT))
+        train_embeddings[machine_id] = embeddings
+    return thresholds, train_embeddings
 
 
 # ── Inference helpers ─────────────────────────────────────────────────────────
@@ -102,31 +107,77 @@ def extract_embeddings(session, spectrograms: np.ndarray) -> np.ndarray:
     for i in range(len(spectrograms)):
         spec = spectrograms[i]                              # (128, T)
         inp  = pad_spectrogram(spec)                        # (1,1,128,432)
-        emb  = session.run(None, {iname: inp})[0]           # (1, 128)
+        emb  = session.run(None, {iname: inp})[0]           # (1, embedding_dim)
         results.append(emb[0])
-    return np.array(results)                                # (N, 128)
+    return np.array(results)                                # (N, embedding_dim)
 
 
 def predict(wav_path: str, machine_id: str) -> dict:
     """Full inference pipeline: WAV -> spectrogram -> ONNX embedding -> LOF score."""
-    session, lof = load_model()
-    thresholds   = load_thresholds()
+    session, lof             = load_model()
+    thresholds, _            = load_thresholds_and_embeddings()
 
-    spec   = wav_to_spectrogram(wav_path)
-    inp    = pad_spectrogram(spec)
+    spec  = wav_to_spectrogram(wav_path)
+    inp   = pad_spectrogram(spec)
 
-    iname  = session.get_inputs()[0].name
-    emb    = session.run(None, {iname: inp})[0]             # (1, 128)
+    iname = session.get_inputs()[0].name
+    emb   = session.run(None, {iname: inp})[0]              # (1, embedding_dim)
 
     score  = float(-lof.score_samples(emb.reshape(1, -1))[0])
     thresh = thresholds.get(machine_id, 1.5)
     label  = "ANOMALY" if score > thresh else "NORMAL"
 
-    return {"label": label, "score": score, "threshold": thresh, "spec": spec}
+    return {
+        "label":     label,
+        "score":     score,
+        "threshold": thresh,
+        "spec":      spec,
+        "embedding": emb[0],                                # (embedding_dim,)
+    }
+
+
+# ── Plot helpers ──────────────────────────────────────────────────────────────
+def plot_pca_cluster(train_embs: np.ndarray, input_emb: np.ndarray,
+                     machine_id: str, label: str):
+    """
+    Project training embeddings and the input embedding into 2D via PCA.
+    Training points: pink circles (#FF69B4).
+    Input point:     yellow star (#FFD700).
+    """
+    import matplotlib.pyplot as plt
+    from sklearn.decomposition import PCA
+
+    all_embs = np.vstack([train_embs, input_emb.reshape(1, -1)])  # (N+1, D)
+    pca      = PCA(n_components=2)
+    projected = pca.fit_transform(all_embs)                        # (N+1, 2)
+
+    train_2d = projected[:-1]   # (N, 2)
+    input_2d = projected[-1]    # (2,)
+
+    var_explained = pca.explained_variance_ratio_ * 100
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.scatter(
+        train_2d[:, 0], train_2d[:, 1],
+        c="#FF69B4", alpha=0.5, s=18, linewidths=0,
+        label=f"Training cluster ({machine_id})"
+    )
+    ax.scatter(
+        input_2d[0], input_2d[1],
+        c="#FFD700", marker="*", s=220, zorder=5, linewidths=0.8,
+        edgecolors="#B8960C",
+        label=f"Input file ({label})"
+    )
+    ax.set_xlabel(f"PC1 ({var_explained[0]:.1f}% variance)")
+    ax.set_ylabel(f"PC2 ({var_explained[1]:.1f}% variance)")
+    ax.set_title(f"LOF embedding space — {machine_id}")
+    ax.legend(framealpha=0.9, fontsize=9)
+    plt.tight_layout()
+    return fig
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
-st.title("🔊 Echo-Check")
+st.title("Echo-Check")
 st.caption("Industrial pump anomaly detection — Conv2D Encoder (ONNX) + LOF scoring")
 
 st.divider()
@@ -163,29 +214,54 @@ if wav_file is not None:
 
     label = result["label"]
     if label == "ANOMALY":
-        st.error(f"⚠️  {label}", icon="🚨")
+        st.error(label)
     else:
-        st.success(f"✅  {label}", icon="✅")
+        st.success(label)
 
     col_a, col_b, col_c = st.columns(3)
     col_a.metric("Anomaly Score",  f"{result['score']:.4f}")
     col_b.metric("Threshold",      f"{result['threshold']:.4f}")
     col_c.metric("Machine ID",     machine_id)
 
-    st.subheader("Mel-spectrogram")
+    st.divider()
+
+    # ── Spectrogram ───────────────────────────────────────────────────────────
     import matplotlib.pyplot as plt
-    fig, ax = plt.subplots(figsize=(10, 3))
-    ax.imshow(result["spec"], aspect="auto", origin="lower", cmap="viridis")
-    ax.set_xlabel("Time frames")
-    ax.set_ylabel("Mel bins")
-    ax.set_title(f"{wav_file.name} — {label}")
-    plt.colorbar(ax.images[0], ax=ax, label="Normalised amplitude")
+
+    st.subheader("Mel-spectrogram")
+    fig_spec, ax_spec = plt.subplots(figsize=(10, 3))
+    ax_spec.imshow(result["spec"], aspect="auto", origin="lower", cmap="viridis")
+    ax_spec.set_xlabel("Time frames")
+    ax_spec.set_ylabel("Mel bins")
+    ax_spec.set_title(f"{wav_file.name} — {label}")
+    plt.colorbar(ax_spec.images[0], ax=ax_spec, label="Normalised amplitude")
     plt.tight_layout()
-    st.pyplot(fig)
-    plt.close()
+    st.pyplot(fig_spec)
+    plt.close(fig_spec)
+
+    # ── PCA cluster plot ──────────────────────────────────────────────────────
+    st.subheader("Embedding space (PCA)")
+    st.caption(
+        "Training embeddings for the selected machine ID are projected to 2D via PCA. "
+        "The input file is projected into the same space. Points far from the training "
+        "cluster correspond to higher LOF scores."
+    )
+
+    _, train_embeddings = load_thresholds_and_embeddings()
+    if machine_id in train_embeddings:
+        fig_pca = plot_pca_cluster(
+            train_embeddings[machine_id],
+            result["embedding"],
+            machine_id,
+            label,
+        )
+        st.pyplot(fig_pca)
+        plt.close(fig_pca)
+    else:
+        st.warning(f"Training embeddings not found for {machine_id}.")
 
 else:
-    st.info("Upload a .wav file to run anomaly detection.", icon="ℹ️")
+    st.info("Upload a .wav file to run anomaly detection.")
 
 st.divider()
 st.caption("Echo-Check — CS5130 Applied AI | Northeastern University")

@@ -1,25 +1,27 @@
 """
-evaluate_conv2d_lof.py — LOF-based anomaly scoring for the Conv2D Autoencoder.
+evaluate_conv2d_lof.py — Fit and save the LOF model for Echo-Check.
 
-Instead of using MSE reconstruction error as the anomaly score, this script:
-  1. Extracts 128-dim encoder embeddings for all normal training spectrograms
-  2. Fits LOF on those embeddings to model the normal cluster
-  3. Scores each test spectrogram by how isolated its embedding is
-  4. Reports AUC, F1, Precision, Recall per machine ID
+Loads the trained Conv2D autoencoder, extracts 128-dim encoder embeddings
+for all normal training spectrograms across all machine IDs, fits a single
+LOF model on those embeddings, and saves it to disk.
 
-No retraining required — loads the existing autoencoder.pth checkpoint.
+No test evaluation is performed here. Use test_performance.py for that.
+
+Pipeline order:
+    1. training.py          -> models/conv2d/autoencoder.pth
+    2. evaluate_conv2d_lof.py (this file) -> models/conv2d/lof_model.pkl
+    3. test_performance.py  -> evaluation report
 
 Usage:
     python src/evaluate_conv2d_lof.py
 """
 
-import numpy as np
 import pickle
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from sklearn.neighbors import LocalOutlierFactor
-from sklearn.metrics import roc_auc_score, f1_score, precision_score, recall_score
 from pathlib import Path
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -34,25 +36,12 @@ TRAIN_NPYS = [
     _ROOT / "data/splits/pump_id_04_train.npy",
     _ROOT / "data/splits/pump_id_06_train.npy",
 ]
-TEST_NPYS = [
-    _ROOT / "data/splits/pump_id_00_test.npy",
-    _ROOT / "data/splits/pump_id_02_test.npy",
-    _ROOT / "data/splits/pump_id_04_test.npy",
-    _ROOT / "data/splits/pump_id_06_test.npy",
-]
-LABEL_NPYS = [
-    _ROOT / "data/splits/pump_id_00_test_labels.npy",
-    _ROOT / "data/splits/pump_id_02_test_labels.npy",
-    _ROOT / "data/splits/pump_id_04_test_labels.npy",
-    _ROOT / "data/splits/pump_id_06_test_labels.npy",
-]
 
-EMBEDDING_DIM    = 128
-TARGET_FREQ      = 128
-TARGET_TIME      = 432
-BATCH_SIZE       = 64
-N_NEIGHBORS      = 20     # LOF neighbourhood size
-THRESHOLD_PCT    = 95     # percentile of normal LOF scores for threshold
+EMBEDDING_DIM = 128
+TARGET_FREQ   = 128
+TARGET_TIME   = 432
+BATCH_SIZE    = 64
+N_NEIGHBORS   = 20   # LOF neighbourhood size
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -119,15 +108,17 @@ class CNNAutoencoder(nn.Module):
 
 # ── Dataset ───────────────────────────────────────────────────────────────────
 class SpectrogramDataset(Dataset):
-    """Pads [N, 128, 431] → [N, 1, 128, 432] and returns float32 tensors."""
+    """Pads/trims [N, 128, T] -> [N, 1, 128, 432] float32 tensors."""
     def __init__(self, spectrograms: np.ndarray):
-        n, freq, t = spectrograms.shape
+        _, _, t = spectrograms.shape
         if t < TARGET_TIME:
             spectrograms = np.pad(
                 spectrograms,
                 ((0, 0), (0, 0), (0, TARGET_TIME - t)),
                 mode="constant", constant_values=0,
             )
+        elif t > TARGET_TIME:
+            spectrograms = spectrograms[:, :, :TARGET_TIME]
         self.data = torch.tensor(spectrograms, dtype=torch.float32).unsqueeze(1)
 
     def __len__(self):
@@ -143,207 +134,84 @@ def extract_embeddings(model: CNNAutoencoder,
                        spectrograms: np.ndarray,
                        device: torch.device) -> np.ndarray:
     """
-    Runs spectrograms through the encoder only and returns
-    the 128-dim embedding for each sample.
-
-    We call model.encoder(x) directly — the decoder never runs.
-    This is the latent vector the encoder has learned to represent
-    each spectrogram with. Normal sounds cluster tightly here.
-    Abnormal sounds land in sparse isolated regions.
-
-    Returns: np.ndarray of shape [N, 128]
+    Runs spectrograms through the encoder only.
+    Decoder is never called — only the latent vector matters.
+    Returns: np.ndarray of shape [N, embedding_dim]
     """
     model.eval()
-    dataset    = SpectrogramDataset(spectrograms)
-    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
+    loader     = DataLoader(SpectrogramDataset(spectrograms),
+                            batch_size=BATCH_SIZE, shuffle=False)
     embeddings = []
-
-    for batch in dataloader:
+    for batch in loader:
         batch = batch.to(device)
-        emb   = model.encoder(batch)          # encoder only — [B, 128]
+        emb   = model.encoder(batch)           # [B, embedding_dim]
         embeddings.append(emb.cpu().numpy())
-
-    return np.concatenate(embeddings, axis=0)  # [N, 128]
+    return np.concatenate(embeddings, axis=0)  # [N, embedding_dim]
 
 
 # ── LOF fitting ───────────────────────────────────────────────────────────────
 def fit_lof(train_embeddings: np.ndarray) -> LocalOutlierFactor:
     """
-    Fits LOF on normal training embeddings.
+    Fits LOF on normal training embeddings only.
 
-    novelty=True allows LOF to score new unseen samples at inference.
-    Without this, LOF can only score the points it was trained on.
+    novelty=True is required so the fitted model can score new unseen
+    samples at inference time. Without it, LOF can only re-score the
+    points it was trained on.
 
-    n_neighbors=20 means LOF compares each point's local density
-    to its 20 nearest neighbours. Higher values = more stable but
-    slower. Lower values = more sensitive to local anomalies.
-
-    Returns: fitted LOF model
+    n_neighbors=20: LOF compares each point's local density to its 20
+    nearest neighbours. Controls the trade-off between stability and
+    sensitivity to local anomalies.
     """
-    print(f"Fitting LOF on {len(train_embeddings)} normal embeddings "
-          f"of dim {train_embeddings.shape[1]}...")
+    print(f"Fitting LOF on {len(train_embeddings)} embeddings "
+          f"of dim {train_embeddings.shape[1]}  (n_neighbors={N_NEIGHBORS})...")
     lof = LocalOutlierFactor(
         n_neighbors=N_NEIGHBORS,
         novelty=True,
         metric="euclidean",
     )
     lof.fit(train_embeddings)
-    print("LOF fitted.\n")
+    print("LOF fitted.")
     return lof
-
-
-# ── LOF scoring ───────────────────────────────────────────────────────────────
-def lof_score(lof: LocalOutlierFactor,
-              embedding: np.ndarray) -> float:
-    """
-    Scores a single embedding using LOF.
-
-    lof.score_samples() returns negative scores where more negative
-    means more anomalous. We negate so higher = more anomalous,
-    consistent with how we think about anomaly scores.
-
-    Returns: float — anomaly score (higher = more anomalous)
-    """
-    return float(-lof.score_samples(embedding.reshape(1, -1))[0])
-
-
-# ── Evaluation ────────────────────────────────────────────────────────────────
-def evaluate_all_ids(model, lof, device):
-    """
-    For each machine ID:
-      1. Extract embeddings for all test spectrograms
-      2. Score each embedding with LOF
-      3. Set threshold at THRESHOLD_PCT of normal LOF scores
-      4. Report AUC, F1, Precision, Recall
-    """
-    print(f"{'='*55}")
-    print("  LOF EVALUATION ACROSS ALL MACHINE IDs")
-    print(f"{'='*55}")
-
-    all_aucs = []
-
-    for test_npy, label_npy in zip(TEST_NPYS, LABEL_NPYS):
-        if not Path(test_npy).exists() or not Path(label_npy).exists():
-            continue
-
-        machine_id = Path(test_npy).name.replace("pump_", "").replace("_test.npy", "")
-        specs  = np.load(test_npy)
-        labels = np.load(label_npy)
-
-        # Extract embeddings for all test spectrograms
-        embeddings = extract_embeddings(model, specs, device)  # [N, 128]
-
-        # Score each embedding with LOF
-        scores = np.array([lof_score(lof, emb) for emb in embeddings])
-
-        # Separate normal and abnormal scores
-        normal_scores   = scores[labels == 0]
-        abnormal_scores = scores[labels == 1]
-
-        # Set threshold at THRESHOLD_PCT of normal LOF scores
-        # This means at most (100 - THRESHOLD_PCT)% of normal samples
-        # will be false-alarmed by design
-        threshold   = np.percentile(normal_scores, THRESHOLD_PCT)
-        predictions = (scores > threshold).astype(int)
-
-        auc  = roc_auc_score(labels, scores)
-        f1   = f1_score(labels, predictions, zero_division=0)
-        prec = precision_score(labels, predictions, zero_division=0)
-        rec  = recall_score(labels, predictions, zero_division=0)
-        all_aucs.append(auc)
-
-        print(f"\n── {machine_id} ──────────────────────────────────────")
-        print(f"  Normal mean   : {normal_scores.mean():.4f}")
-        print(f"  Abnormal mean : {abnormal_scores.mean():.4f}")
-        print(f"  Threshold     : {threshold:.4f}  ({THRESHOLD_PCT}th pct)")
-        print(f"  AUC-ROC       : {auc:.4f}")
-        print(f"  Precision     : {prec:.4f}")
-        print(f"  Recall        : {rec:.4f}")
-        print(f"  F1 Score      : {f1:.4f}")
-
-    print(f"\n{'='*55}")
-    print(f"  Average AUC : {np.mean(all_aucs):.4f}")
-    print(f"{'='*55}")
-
-    # ── Combined evaluation across all IDs ────────────────────────────────────
-    print(f"\n{'='*55}")
-    print("  COMBINED EVALUATION (all machine IDs pooled)")
-    print(f"{'='*55}")
-
-    all_specs  = np.concatenate([np.load(p) for p in TEST_NPYS  if Path(p).exists()])
-    all_labels = np.concatenate([np.load(p) for p in LABEL_NPYS if Path(p).exists()])
-
-    all_embeddings = extract_embeddings(model, all_specs, device)
-    all_scores     = np.array([lof_score(lof, emb) for emb in all_embeddings])
-
-    normal_scores   = all_scores[all_labels == 0]
-    abnormal_scores = all_scores[all_labels == 1]
-    threshold       = np.percentile(normal_scores, THRESHOLD_PCT)
-    predictions     = (all_scores > threshold).astype(int)
-
-    auc  = roc_auc_score(all_labels, all_scores)
-    f1   = f1_score(all_labels, predictions, zero_division=0)
-    prec = precision_score(all_labels, predictions, zero_division=0)
-    rec  = recall_score(all_labels, predictions, zero_division=0)
-
-    tp = int(((predictions == 1) & (all_labels == 1)).sum())
-    tn = int(((predictions == 0) & (all_labels == 0)).sum())
-    fp = int(((predictions == 1) & (all_labels == 0)).sum())
-    fn = int(((predictions == 0) & (all_labels == 1)).sum())
-
-    print(f"\n  Total samples : {len(all_labels)}  "
-          f"(normal={int((all_labels==0).sum())}, abnormal={int((all_labels==1).sum())})")
-    print(f"  Normal mean   : {normal_scores.mean():.4f}")
-    print(f"  Abnormal mean : {abnormal_scores.mean():.4f}")
-    print(f"  Threshold     : {threshold:.4f}  ({THRESHOLD_PCT}th pct)")
-    print(f"\n  AUC-ROC       : {auc:.4f}")
-    print(f"  Precision     : {prec:.4f}")
-    print(f"  Recall        : {rec:.4f}")
-    print(f"  F1 Score      : {f1:.4f}")
-    print(f"\n  Confusion Matrix")
-    print(f"  TP: {tp:>4}  FP: {fp:>4}")
-    print(f"  FN: {fn:>4}  TN: {tn:>4}")
-    print(f"{'='*55}")
-
-    return all_aucs
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     device = get_device()
-    print(f"Device : {device}\n")
+    print(f"Device : {device}")
 
-    # ── Load trained autoencoder ──────────────────────────────────────────────
-    # We load the full checkpoint but only use the encoder for embeddings
+    # Load autoencoder checkpoint
+    print(f"\nLoading checkpoint : {CHECKPOINT}")
     ckpt  = torch.load(CHECKPOINT, map_location=device, weights_only=False)
     model = CNNAutoencoder(embedding_dim=EMBEDDING_DIM).to(device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
-    print(f"Loaded checkpoint: {CHECKPOINT}")
-    print(f"Final training loss: {ckpt['final_loss']:.6f}\n")
+    print(f"Final training loss from checkpoint : {ckpt['final_loss']:.6f}")
 
-    # ── Extract normal training embeddings ────────────────────────────────────
-    # Load all normal training spectrograms and run them through the encoder.
-    # These embeddings define what "normal" looks like in the latent space.
-    # LOF will use these to build its model of the normal cluster.
-    print("Extracting normal training embeddings...")
-    train_arrays = [np.load(p) for p in TRAIN_NPYS if Path(p).exists()]
-    train_specs  = np.concatenate(train_arrays, axis=0)
-    print(f"Loaded {len(train_specs)} normal training spectrograms")
+    # Load all normal training spectrograms
+    print("\nLoading normal training spectrograms...")
+    available = [p for p in TRAIN_NPYS if Path(p).exists()]
+    if not available:
+        raise FileNotFoundError(f"No training .npy files found. "
+                                f"Expected them in {_ROOT / 'data/splits/'}")
+    train_specs = np.concatenate([np.load(p) for p in available], axis=0)
+    print(f"Loaded {len(train_specs)} normal spectrograms "
+          f"from {len(available)} machine ID(s)")
 
+    # Extract encoder embeddings for all training normals
+    print("\nExtracting training embeddings...")
     train_embeddings = extract_embeddings(model, train_specs, device)
-    print(f"Extracted embeddings: {train_embeddings.shape}\n")
+    print(f"Embeddings shape : {train_embeddings.shape}")
 
-    # ── Fit LOF on normal embeddings ──────────────────────────────────────────
+    # Fit LOF on training embeddings
+    print()
     lof = fit_lof(train_embeddings)
 
-    # ── Save LOF model ────────────────────────────────────────────────────────
+    # Save LOF to disk
+    LOF_OUT.parent.mkdir(parents=True, exist_ok=True)
     with open(LOF_OUT, "wb") as f:
         pickle.dump(lof, f)
-    print(f"LOF model saved: {LOF_OUT}\n")
-
-    # ── Evaluate across all machine IDs ───────────────────────────────────────
-    evaluate_all_ids(model, lof, device)
+    print(f"\nLOF model saved : {LOF_OUT}")
+    print("\nDone. Run test_performance.py to evaluate.")
 
 
 if __name__ == "__main__":

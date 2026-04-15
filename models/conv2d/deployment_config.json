@@ -2,7 +2,7 @@
   "embedding_dim": 128,
   "target_freq": 128,
   "target_time": 432,
-  "final_loss": 0.001254241087503652,
+  "final_loss": 0.0012387766804982056,
   "epochs_trained": 100,
   "threshold_pct": 95
 }

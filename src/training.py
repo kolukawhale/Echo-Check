@@ -1,5 +1,5 @@
 """
-train_conv2d.py — Training script for the Conv2D Autoencoder.
+training.py — Training script for the Conv2D Autoencoder.
 
 Uses the Echo-Check train/test splits (data/splits/pump_id_XX_train.npy).
 Trains exclusively on normal samples. Evaluates on the test set after training.
