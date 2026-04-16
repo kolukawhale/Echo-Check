@@ -4,9 +4,9 @@ phase3_optimize.py — Echo-Check Phase 3 (LOF Encoder Pipeline)
 Optimises the Conv2D encoder for edge deployment:
   3.1  Export encoder to ONNX
   3.2  Graph optimisation (onnxsim)
-  3.4  INT8 static quantisation (QDQ, QUInt8, Conv+Gemm only)
-  3.5  Validate: AUC using LOF scores from INT8 encoder embeddings
-  3.6  CPU latency benchmark
+  3.3  INT8 static quantisation (QDQ, QUInt8, Conv+Gemm only)
+  3.4  Validate: AUC using LOF scores from INT8 encoder embeddings
+  3.5  CPU latency benchmark
 
 Usage:
     python phase3_optimize.py
@@ -30,7 +30,7 @@ import sys
 import time
 import warnings
 
-# Force UTF-8 output so torch.onnx emoji logs don't crash on Windows cp1252
+# Force UTF-8 output so torch.onnx logs don't crash on Windows
 if hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "buffer"):
@@ -53,8 +53,8 @@ from sklearn.metrics import roc_auc_score
 
 warnings.filterwarnings("ignore")
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-ROOT       = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Echo-Check/
+# Setting the paths
+ROOT       = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODELS_DIR = os.path.join(ROOT, "models", "conv2d")
 DATA_DIR   = os.path.join(ROOT, "data", "splits")
 OUTPUT_DIR = os.path.join(ROOT, "models", "phase3_outputs_lof")
@@ -76,7 +76,7 @@ N_RUNS     = 200
 PUMP_IDS   = ["00", "02", "04", "06"]
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# Function to return model size in KB — includes external .data file if present
 def total_size_kb(path):
     total = os.path.getsize(path)
     if os.path.exists(path + ".data"):
@@ -87,14 +87,14 @@ def total_size_kb(path):
 def load_split(pump_id, split):
     """Load data/splits/pump_id_XX_<split>.npy → (N, 1, 128, 432) float32."""
     path = os.path.join(DATA_DIR, f"pump_id_{pump_id}_{split}.npy")
-    arr  = np.load(path)                          # (N, 128, 431)
-    arr  = arr[:, np.newaxis, :, :]               # (N, 1, 128, 431)
+    arr  = np.load(path)                          
+    arr  = arr[:, np.newaxis, :, :]              
     if arr.shape[-1] < 432:
         arr = np.pad(arr, ((0,0),(0,0),(0,0),(0, 432 - arr.shape[-1])))
     return arr.astype(np.float32)
 
 
-# ── Step 0: Load config + state dict ─────────────────────────────────────────
+#Step 0: Loading config + state dict ─────────────────────────────────────────
 print("=" * 65)
 print("  PHASE 3 — LOF Encoder Optimisation & Export")
 print("=" * 65)
@@ -112,18 +112,18 @@ print(f"    Embedding dim  : {EMBEDDING_DIM}")
 print(f"    Input shape    : (1, {TARGET_FREQ}, {TARGET_TIME})")
 print(f"    LOF threshold  : {THRESHOLD_PCT}th percentile of normal scores")
 
-# ── Auto-detect architecture from state dict ──────────────────────────────────
+#Auto-detecting architecture from state dict 
 ckpt = torch.load(PTH_AUTOENCODER, map_location="cpu", weights_only=False)
 sd   = ckpt["model_state_dict"]
 
-# Encoder conv channel widths — indices 0,3,6,9 are the Conv2d weight tensors
+#Encoder conv channel widths 
 ENC_CH = [
     sd["encoder.conv_blocks.0.weight"].shape[0],
     sd["encoder.conv_blocks.3.weight"].shape[0],
     sd["encoder.conv_blocks.6.weight"].shape[0],
     sd["encoder.conv_blocks.9.weight"].shape[0],
 ]
-# Last conv out channels → fc input size
+#Last conv out channels - fc input size
 FC_IN = ENC_CH[-1]
 
 print(f"\n[0] Architecture detected from state dict")
@@ -131,7 +131,7 @@ print(f"    Encoder channels : {ENC_CH}")
 print(f"    FC in -> out     : {FC_IN} -> {EMBEDDING_DIM}")
 
 
-# ── Architecture definition ───────────────────────────────────────────────────
+#Architecture definition 
 class Encoder(nn.Module):
     def __init__(self, channels, embedding_dim):
         super().__init__()
@@ -150,10 +150,10 @@ class Encoder(nn.Module):
         return self.fc(x)
 
 
-# ── Load encoder weights ──────────────────────────────────────────────────────
+#Loading encoder weights 
 encoder = Encoder(ENC_CH, EMBEDDING_DIM)
 
-# Strip "encoder." prefix from state dict keys
+#Strips "encoder." prefix from state dict keys
 enc_sd = {k.replace("encoder.", ""): v for k, v in sd.items() if k.startswith("encoder.")}
 encoder.load_state_dict(enc_sd)
 encoder.eval()
@@ -162,7 +162,7 @@ n_params = sum(p.numel() for p in encoder.parameters())
 print(f"\n[0] Encoder loaded  ({n_params:,} parameters)")
 
 
-# ── Step 3.1: Export encoder to ONNX ─────────────────────────────────────────
+#Step 3.1: Export encoder to ONNX 
 print(f"\n[3.1] Exporting encoder to ONNX (opset {OPSET})...")
 
 dummy = torch.zeros(1, 1, TARGET_FREQ, TARGET_TIME)
@@ -190,7 +190,7 @@ print(f"    Nodes  : {len(onnx_full.graph.node)}")
 print(f"    Size   : {full_size_kb:.1f} KB")
 
 
-# ── Step 3.2: Graph optimisation (onnxsim) ────────────────────────────────────
+#Step 3.2: Graph optimisation (onnxsim)
 print(f"\n[3.2] Simplifying with onnxsim...")
 
 sim_model, ok = simplify(onnx_full)
@@ -203,7 +203,7 @@ print(f"    Size   : {full_size_kb:.1f} KB → {sim_size_kb:.1f} KB")
 print(f"    Saved  : {ONNX_SIM_PATH}")
 
 
-# ── Step 3.4a: Calibration data ───────────────────────────────────────────────
+#Calibration data
 print(f"\n[3.4a] Building calibration dataset ({CALIB_PER_ID} samples × {len(PUMP_IDS)} pump IDs)...")
 
 calib_data = np.concatenate([
@@ -231,7 +231,7 @@ class CalibReader(CalibrationDataReader):
         self._idx = 0
 
 
-# ── Step 3.4: INT8 static quantisation ───────────────────────────────────────
+#Step 3.3: INT8 static quantisation
 print(f"\n[3.4] Running INT8 static quantisation...")
 print(f"    Format     : QDQ")
 print(f"    Activations: QUInt8  (ORT AVX2 optimised Conv kernels)")
@@ -266,7 +266,7 @@ print(f"    INT8 size : {int8_size_kb:.1f} KB  ({len(onnx_int8.graph.node)} node
 print(f"    Saved     : {ONNX_INT8_PATH}")
 
 
-# ── Step 3.5: Validate AUC with LOF scores ────────────────────────────────────
+#Step 3.4: Validate AUC with LOF scores
 print(f"\n[3.5] Validating AUC using LOF scores...")
 
 with open(LOF_MODEL_PATH, "rb") as f:
@@ -284,7 +284,7 @@ def get_embeddings_ort(session, data):
     iname = session.get_inputs()[0].name
     embs  = []
     for sample in data:
-        emb = session.run(None, {iname: sample[np.newaxis]})[0]  # (1, 128)
+        emb = session.run(None, {iname: sample[np.newaxis]})[0] 
         embs.append(emb[0])
     return np.array(embs)
 
@@ -294,7 +294,7 @@ def lof_scores(lof_model, embeddings):
     return -lof_model.score_samples(embeddings)
 
 
-# Load validation data — use test splits (unseen during training)
+#Loading validation data — uses test split
 test_normal   = np.concatenate([load_split(pid, "test")   for pid in PUMP_IDS])
 test_labels   = np.concatenate([
     np.load(os.path.join(DATA_DIR, f"pump_id_{pid}_test_labels.npy")) for pid in PUMP_IDS
@@ -317,7 +317,7 @@ print(f"\n    FP32 AUC : {fp32_auc:.4f}")
 print(f"    INT8 AUC : {int8_auc:.4f}   (delta: {(int8_auc-fp32_auc)*100:+.2f}%)")
 
 
-# ── Step 3.6: CPU latency benchmark ──────────────────────────────────────────
+#Step 3.5: CPU latency benchmar
 print(f"\n[3.6] CPU latency benchmark ({N_RUNS} runs, {N_WARMUP} warm-up)...")
 
 dummy_np = dummy.numpy()
@@ -343,7 +343,7 @@ print(f"    {'-'*55}")
 print(f"    INT8 speedup : {speedup:.2f}x")
 
 
-# ── Summary ───────────────────────────────────────────────────────────────────
+#Summary 
 print(f"\n{'='*65}")
 print(f"  PHASE 3 SUMMARY — LOF Encoder Optimisation")
 print(f"{'='*65}")
