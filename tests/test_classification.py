@@ -1,5 +1,5 @@
 """
-test_performance.py — Evaluation report for the Echo-Check Conv2D + LOF pipeline.
+test_classification.py — Evaluation report for the Echo-Check Conv2D + LOF pipeline.
 
 Loads the trained autoencoder (autoencoder.pth) and the fitted LOF model
 (lof_model.pkl) and evaluates anomaly detection performance on the test splits.

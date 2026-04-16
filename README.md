@@ -152,6 +152,80 @@ Reports correct vs incorrect classifications per machine ID with confusion matri
 python tests/test_classification.py
 ```
 
+## UI Guide
+
+The Echo-Check Streamlit app provides a browser-based interface for running anomaly detection on a single `.wav` recording without touching the command line. Launch it with:
+
+```bash
+streamlit run app.py
+```
+
+---
+
+### Step 1 — Select a Machine ID and upload a recording
+
+At the top of the app, use the **Machine ID** dropdown to select the pump you are inspecting (`id_00`, `id_02`, `id_04`, or `id_06`). This is important — it tells the app which machine's normal training data to use when calibrating the anomaly threshold. Selecting the wrong ID will produce unreliable predictions.
+
+The **Threshold percentile** shown next to the dropdown is fixed at the **95th percentile**, meaning a recording must score higher than 95% of normal training recordings before it is flagged as an anomaly.
+
+Then use the **Upload a pump recording (.wav)** file picker to select a `.wav` file from your machine. A 10-second clip from the MIMII dataset works best. Once uploaded, an audio player appears so you can listen to the recording before inference runs.
+
+---
+
+### Step 2 — Read the result
+
+Inference runs automatically after upload. The result banner turns **red for ANOMALY** or **green for NORMAL**. Below the banner, three metrics are shown side by side:
+
+| Metric            | What it means                                                                                                                                            |
+| :---------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Anomaly Score** | The LOF score for this recording. Higher = further from normal behaviour.                                                                                |
+| **Threshold**     | The 95th-percentile LOF score computed from this machine's normal training data. The recording is flagged as an anomaly if its score exceeds this value. |
+| **Machine ID**    | Confirms which machine's threshold was used for this prediction.                                                                                         |
+
+The two screenshots below show both possible outcomes for the same file (`00000001.wav`) tested against different machine IDs.
+
+**ANOMALY** — tested against `id_00`. Score (1.4251) exceeds the threshold (1.3889):
+
+![ANOMALY result](docs/anomaly.jpeg)
+
+**NORMAL** — same file tested against `id_02`. Score (1.1503) is below `id_02`'s threshold (1.3331):
+
+![NORMAL result](docs/norm.jpeg)
+
+This illustrates why selecting the correct Machine ID matters — the threshold is machine-specific.
+
+---
+
+### Step 3 — Inspect the Mel-spectrogram
+
+Below the result metrics, the app renders the **Mel-spectrogram** of the uploaded file. This is a heatmap of frequency energy over time: the x-axis is time (in frames), the y-axis is frequency (Mel bins 0–128), and colour indicates normalised amplitude — brighter/yellower = higher energy.
+
+A normal pump recording typically shows a smooth, consistent frequency band. An anomalous recording often shows disrupted patterns, extra high-frequency energy, or irregular bursts that stand out visually.
+
+---
+
+### Step 4 — Inspect the Embedding Space (PCA)
+
+The final section shows a **2D PCA projection** of the encoder's internal representation. Every pink dot is a training recording from the selected machine ID projected into the same space. The gold star (⭐) marks where the uploaded file lands in that space.
+
+**How to read it:** if the star sits inside or near the pink cluster, the recording looks similar to normal training data and scores low (NORMAL). If the star is far from the cluster — as in the ANOMALY example above — the encoder has produced a significantly different representation for this recording, driving the LOF score above the threshold.
+
+This plot is especially useful for borderline cases where the score is close to the threshold.
+
+---
+
+## Glossary of Experiments
+
+### `CPU v/s GPU Benchmarks`
+
+![CPU v/s GPU](docs/CPUGPU.jpeg)
+
+---
+
+### `Comaprsion of ONNX + Quantized model to normal model performance`
+
+## ![Comaprsion of ONNX + Quantized model to normal model performance](docs/Quantization_comp.jpeg)
+
 ## License
 
 This project is licensed under the MIT License.

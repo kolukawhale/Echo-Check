@@ -1,5 +1,5 @@
 """
-test_fp32_vs_int8.py — FP32 vs INT8 quantized encoder comparison for Echo-Check.
+fp32_vs_int.py — FP32 vs INT8 quantized encoder comparison for Echo-Check.
 
 Loads both ONNX encoder variants and the fitted LOF model, scores the full
 test set with each, and produces:

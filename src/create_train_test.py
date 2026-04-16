@@ -1,5 +1,5 @@
 """
-train_test_split.py — Train/Test split for Echo-Check (MIMII unsupervised protocol).
+create_train_test.py — Train/Test split for Echo-Check (MIMII unsupervised protocol).
 
 Train : normal samples only  (80%)
 Test  : remaining normal (20%) + all abnormal samples

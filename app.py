@@ -1,10 +1,6 @@
 """
 app.py — Echo-Check Streamlit frontend.
 
-Runs the Conv2D + LOF anomaly detection pipeline on an uploaded .wav file.
-Uses the ONNX-optimised encoder (encoder_int8.onnx) for inference —
-no PyTorch required at runtime.
-
 Usage:
     streamlit run app.py
 """
